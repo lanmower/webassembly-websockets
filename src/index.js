@@ -1,13 +1,11 @@
 import "../node_modules/normalize.css/normalize.css";
 import "./style";
 import { Component } from "preact";
-// import WasmTerminal from "@wasmer/wasm-terminal";
 import WasmTerminal from '@wasmer/wasm-terminal/lib/optimized/wasm-terminal.esm';
 import { getWelcomeMessage } from "./services/wapm/callback-commands/welcome";
 import { WasmFs } from "@wasmer/wasmfs";
 
 import WAPM from './services/wapm/wapm';
-
 
 const readFileAsBuffer = file => {
   const fileReader = new FileReader();
@@ -16,7 +14,7 @@ const readFileAsBuffer = file => {
     fileReader.onload = event => {
       resolve(event.target.result);
     };
-    fileReader.onabout = () => {
+    fileReader.onerror = () => {
       reject();
     };
     fileReader.readAsArrayBuffer(file);
@@ -45,20 +43,46 @@ export default class App extends Component {
     if (window) {
       window.addEventListener("resize", this.onResize.bind(this));
     }
+
+    // WebSocket setup
+    this.websocket = new WebSocket("ws://your-server-url"); // Replace with your WebSocket server URL
+    this.websocket.onmessage = this.handleWebSocketMessage.bind(this);
   }
 
-  async fetchCommand (options) {
+  async fetchCommand(options) {
     let commandName = options.args[0];
     if (window.gtag) {
       window.gtag('event', 'run command', {
-        // 'event_category': '',
         'event_label': commandName,
-        // 'value': '<here the command args and environment>'
       });
     }
     return await this.wapm.runCommand(options);
-  };
-  
+  }
+   // WebSocket message handler
+   handleWebSocketMessage(event) {
+    const message = JSON.parse(event.data);
+
+    if (message.type === "xterm_instruction") {
+      this.wasmTerminal.write(message.instruction);
+    } else if (message.type === "upload_wasm") {
+      const { fileName, fileData } = message;
+      this.uploadWasmFile(fileName, fileData);
+    }
+  }
+
+  uploadWasmFile(fileName, fileData) {
+    this.wasmFs.volume.writeFileSync(`/tmp/${fileName}`, fileData);
+    this.wasmTerminal.print(`File uploaded successfully to /tmp
+→ /tmp/${fileName}`);
+
+    if (fileName.endsWith(".wasm")) {
+      const commandName = fileName.replace(".wasm", "");
+      this.wapm.installWasmBinary(commandName, fileData).then(() => {
+        this.wasmTerminal.print(`WebAssembly file detected: ${fileName}
+→ Installed commands: ${commandName}`);
+      });
+    }
+  }
   componentDidMount() {
     const asyncTask = async () => {
       let params = this._handleQueryParams();
